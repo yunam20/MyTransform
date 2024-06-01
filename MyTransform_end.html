@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  canvas {
+    border: 1px solid #000;
+    margin-right: 20px;
+  }
+  #screen {
+    display: flex;
+  }
+</style>
+</head>
+<body>
+<div id="screen">
+  <canvas id="myCanvas" width="400" height="400"></canvas><br>
+    <div style="width: 400px; border: 1px solid #000; padding: 15px; margin: 1px;">
+      <h2>MY TRANSFORMATION</h2>
+      <div id="inspector">
+        Translate<br>
+        <label>X: <input type="number" id="transX" value="0" onchange="updateValues()"></label>
+        <label>Y: <input type="number" id="transY" value="0" onchange="updateValues()"></label>
+        <br>
+        Scale<br>
+        <label>X: <input type="number" id="scaleX" value="1" step="0.1" onchange="updateValues()"></label>
+        <label>Y: <input type="number" id="scaleY" value="1" step="0.1" onchange="updateValues()"></label>
+        <br>
+        Rotate<br>
+        <label>θ: <input type="number" id="rotate" value="0" onchange="updateValues()"></label>
+        <br><br>
+        <button onclick="firstDraw()">Draw Heart</button>
+        <button onclick="undo()">Undo</button>
+        <button onclick="redo()">Redo</button>
+      </div>
+    </div>
+</div>
+<div>
+  <input type="radio" id="translateButton" name="radioGroup" value="option1">
+  <label for="translate">Translate</label>
+  <input type="radio" id="scaleButton" name="radioGroup" value="option2">
+  <label for="scale">Scale</label>
+  <input type="radio" id="rotateButton" name="radioGroup" value="option3">
+  <label for="rotate">Rotate</label>
+</div>
+
+<script>
+  var canvas = document.getElementById("myCanvas");
+  var ctx = canvas.getContext("2d");
+  let heart = {
+    transX: 0,
+    transY: 0,
+    scaleX: 1, // 초기 X 스케일 값
+    scaleY: 1, // 초기 Y 스케일 값
+    degree: Math.PI/180,
+    rotate: 0,
+    isDragging: false,
+    clickedResizeHandle: ""
+  };
+  let isDraw = false;
+  let undoStack = [];
+  let redoStack = [];
+
+  //Draw Heart
+  function firstDraw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if(isDraw == false){
+      isDraw = true;
+      undoStack.push({...heart});
+      applyTransformation();
+    }
+    else{
+      isDraw = false;
+    }
+  }
+
+  function pushTransformationToHistory() {
+    undoStack.push({...heart});
+    redoStack = [];
+    
+    if (undoStack.length > 10) {
+        undoStack.shift();
+    }
+  }
+
+  //역행렬
+  function getInverseMatrix(a, b) {
+    let undoTranslateMatrix = hwTranslateMatrix(-(b.transX - a.transX), -(b.transY - a.transY));
+    let undoScaleMatrix = hwScaleMatrix(1 / (b.scaleX / a.scaleX), 1 / (b.scaleY / a.scaleY));
+    let undoRotationMatrix = UndoRotationMatrix(b.degree * (b.rotate - a.rotate));
+
+    return [
+      undoTranslateMatrix,
+      undoScaleMatrix,
+      undoRotationMatrix
+    ];
+  }
+
+    //변환 행렬
+    function getMatrix(vector) {
+      let TranslateMatrix = hwTranslateMatrix(vector.transX, vector.transY);
+      let ScaleMatrix = hwScaleMatrix(vector.scaleX, vector.scaleY);
+      let RotationMatrix = hwRotationMatrix(vector.degree * vector.rotate);
+
+      return hwMatrixMultiply(TranslateMatrix, hwMatrixMultiply(ScaleMatrix, RotationMatrix));
+    }
+
+    //undo용 변환 행렬, 행렬을 먼저 곱하지 않고 리턴
+    function getMatrix2(vector) {
+    let TranslateMatrix = hwTranslateMatrix(vector.transX, vector.transY);
+    let ScaleMatrix = hwScaleMatrix(vector.scaleX, vector.scaleY);
+    let RotationMatrix = hwRotationMatrix(vector.degree * vector.rotate);
+
+    return [
+      TranslateMatrix, 
+      ScaleMatrix,
+      RotationMatrix
+    ];
+  }
+
+  function undo() {
+    if(isDraw == true){
+      if (undoStack.length <= 1) return;
+
+      const lastState = undoStack.pop();
+      redoStack.push(lastState);
+
+      const currentState = undoStack[undoStack.length - 1];
+      let inverseMatrix = getInverseMatrix(currentState, lastState);
+      let matrix = getMatrix2(lastState);
+      let translate = hwMatrixMultiply(matrix[0], inverseMatrix[0]);
+      let scale = hwMatrixMultiply(matrix[1], inverseMatrix[1]);
+      let rotate = hwMatrixMultiply(matrix[2], inverseMatrix[2]);
+      let descartes = fuckingDescartes();
+
+      //행렬곱 순서는 매우 중요함
+      let myMatrix = hwMatrixMultiply(translate, hwMatrixMultiply(scale, rotate));
+
+      let combinedMatrix = hwMatrixMultiply(descartes, myMatrix);
+      heart = {...currentState};
+
+      updateInputs();
+      draw(ctx, combinedMatrix);
+    }
+  }
+
+  function redo() {
+    if(isDraw == true){
+      if (redoStack.length == 0) return;
+
+      const nextState = redoStack.pop();
+      undoStack.push(nextState);
+
+      const currentState = undoStack[undoStack.length - 1];
+      let inverseMatrix = getInverseMatrix(currentState, nextState);
+      let matrix = getMatrix2(nextState);
+      let translate = hwMatrixMultiply(matrix[0], inverseMatrix[0]);
+      let scale = hwMatrixMultiply(matrix[1], inverseMatrix[1]);
+      let rotate = hwMatrixMultiply(matrix[2], inverseMatrix[2]);
+      let descartes = fuckingDescartes();
+
+      //행렬곱 순서는 매우 중요함
+      let myMatrix = hwMatrixMultiply(translate, hwMatrixMultiply(scale, rotate));
+      
+      let combinedMatrix = hwMatrixMultiply(descartes, myMatrix);
+
+      heart = {...currentState};
+      
+      updateInputs();
+      draw(ctx, combinedMatrix);
+    }
+  }
+
+  function updateInputs() {
+    document.getElementById("transX").value = heart.transX;
+    document.getElementById("transY").value = heart.transY;
+    document.getElementById("scaleX").value = heart.scaleX;
+    document.getElementById("scaleY").value = heart.scaleY;
+    document.getElementById("rotate").value = heart.rotate;
+  }
+
+  function updateValues() {
+    heart.transX = parseFloat(document.getElementById("transX").value);
+    heart.transY = parseFloat(document.getElementById("transY").value);
+    heart.scaleX = parseFloat(document.getElementById("scaleX").value);
+    heart.scaleY = parseFloat(document.getElementById("scaleY").value);
+    heart.rotate = parseFloat(document.getElementById("rotate").value);
+
+    if(isDraw == true){
+      pushTransformationToHistory();
+      applyTransformation();
+    }
+  }
+  
+  //캔버스를 데카르트 좌표계로 만들기
+  function fuckingDescartes()
+  {
+    let dTranslate = hwTranslateMatrix(canvas.width / 2, canvas.height / 2);
+    let dScale = hwScaleMatrix(1, -1);
+    let dCombinedMatrix = hwMatrixMultiply(dTranslate, dScale);
+
+    return dCombinedMatrix;
+  }
+
+  //행렬곱
+  function hwMatrixMultiply(A, B) {
+      let aNumRows = A.length;
+      let aNumCols = A[0].length;
+      let bNumRows = B.length;
+      let bNumCols = B[0].length;
+
+      let result = new Array(aNumRows);
+
+      for (let r = 0; r < aNumRows; r++) {
+          result[r] = new Array(bNumCols);
+          
+          for (let c = 0; c < bNumCols; c++) {
+              result[r][c] = 0;
+              
+              for (let i = 0; i < aNumCols; i++) {
+                  result[r][c] += A[r][i] * B[i][c];
+              }
+          }
+      }
+
+      return result;
+  }
+
+  //이동횡렬
+  function hwTranslateMatrix(x, y){
+    return [
+        [1, 0, x],
+        [0, 1, y],
+        [0, 0, 1]
+      ];
+  }
+
+  //확대축소행렬
+  function hwScaleMatrix(x, y) {
+    return [
+        [x, 0, 0],
+        [0, y, 0],
+        [0, 0, 1]
+      ];
+  }
+
+  //회전행렬
+  function hwRotationMatrix(theta) {
+    cos = Math.cos(theta);
+    sin = Math.sin(theta);
+    return [
+      [cos, -sin, 0],
+      [sin, cos, 0],
+      [0, 0, 1]
+    ];
+  }
+
+  function UndoRotationMatrix(theta) {
+    cos = Math.cos(theta);
+    sin = Math.sin(theta);
+    return [
+      [cos, sin, 0],
+      [-sin, cos, 0],
+      [0, 0, 1]
+    ];
+  }
+
+  function draw(ctx, transformationMatrix) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.beginPath();
+    let startX = 16 * Math.sin(0) ** 3;
+    let startY = (13 * Math.cos(0) - 5 * Math.cos(2*0) - 2 * Math.cos(3*0) - Math.cos(4*0));
+    let startTransformed = hwMatrixMultiply(transformationMatrix, [[startX], [startY], [1]]);
+    ctx.moveTo(startTransformed[0][0], startTransformed[1][0]);
+
+    for(let i = 0; i <= Math.PI * 2; i += 0.01) {
+        let x = 16 * Math.sin(i) ** 3;
+        let y = (13 * Math.cos(i) - 5 * Math.cos(2*i) - 2 * Math.cos(3*i) - Math.cos(4*i));
+        let transformed = hwMatrixMultiply(transformationMatrix, [[x], [y], [1]]);
+        ctx.lineTo(transformed[0][0], transformed[1][0]);
+    }
+    ctx.fillStyle = "red";
+    ctx.fill();
+    updateInputs() 
+  }
+
+  function applyTransformation() {
+      if(heart.scaleX <= 0) {heart.scaleX = 0};
+      if(heart.scaleY <= 0) {heart.scaleY = 0};
+
+      let descartes = fuckingDescartes();
+      let matrix = getMatrix(heart);
+
+      let combinedMatrix = hwMatrixMultiply(descartes, matrix);
+
+      draw(ctx, combinedMatrix);
+  }
+
+  canvas.addEventListener("mousedown", function(event) {
+    if(isDraw == true){
+      var mouseX = event.clientX - canvas.getBoundingClientRect().left;
+      var mouseY = event.clientY - canvas.getBoundingClientRect().top;
+      
+      if (document.getElementById("translateButton").checked){
+        heart.dragOffsetX = mouseX - heart.transX;
+        heart.dragOffsetY = -mouseY - heart.transY;
+      }
+      else if (document.getElementById("scaleButton").checked){
+        heart.dragOffsetX = mouseX - heart.scaleX;
+        heart.dragOffsetY = -mouseY - heart.scaleY;
+      }
+      else if (document.getElementById("rotateButton").checked){
+        heart.dragOffsetY = -mouseY - heart.rotate;
+      }
+      
+      heart.isDragging = true;
+    }
+  });
+
+  canvas.addEventListener("mousemove", function(event) {
+    if(isDraw == true){
+      if (heart.isDragging) {
+        var mouseX = event.clientX - canvas.getBoundingClientRect().left;
+        var mouseY = event.clientY - canvas.getBoundingClientRect().top;
+
+        if (document.getElementById("translateButton").checked){
+          heart.transX = mouseX - heart.dragOffsetX;
+          heart.transY = -mouseY - heart.dragOffsetY;
+        }
+        else if (document.getElementById("scaleButton").checked){
+          heart.scaleX = (mouseX - heart.dragOffsetX) * 0.1;
+          heart.scaleY = (-mouseY - heart.dragOffsetY) * 0.1;
+        }
+        else if (document.getElementById("rotateButton").checked){
+          if(canvas.width/2 < mouseX)
+            heart.rotate = -mouseY - heart.dragOffsetY;
+          else
+            heart.rotate = mouseY + heart.dragOffsetY;
+        }
+        applyTransformation();
+      }
+    }
+  });
+
+  canvas.addEventListener("mouseup", function() {
+    if(isDraw == true){
+      if (document.getElementById("translateButton").checked
+      || document.getElementById("scaleButton").checked
+      || document.getElementById("rotateButton").checked)
+      {
+        heart.isDragging = false;
+        pushTransformationToHistory();
+      }
+    }
+  });
+
+</script>
+</body>
+</html>
